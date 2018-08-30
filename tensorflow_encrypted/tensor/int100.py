@@ -132,6 +132,18 @@ class Int100Tensor(object):
         return _reshape(self, *axes)
 
 
+CONTINUE HERE
+
+class Int100RandomTensor(object):
+
+    def __init__(self, seed, post_multiply=None):
+        self.seed = seed
+        self.post_multiply = post_multiply
+
+    def to_full_tensor(self):
+        tf.random_ CONTINUE
+
+
 def _lift(x):
     # TODO[Morten] support other types of `x`
 

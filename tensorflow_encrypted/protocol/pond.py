@@ -948,9 +948,36 @@ def _share(secret) -> Tuple[BackingTensor, BackingTensor]:
     assert isinstance(secret, BackingTensor), type(secret)
 
     with tf.name_scope('share'):
+        # TODO[Morten]
+        # if we're only sending seeds then this is not
+        # balanced in terms of traffic to server0 and server1;
+        # we could flip a coin here every time and let it decide
+        # who gets and seed and who get's the expanded randomness
         share0 = BackingTensor.sample_uniform(secret.shape)
         share1 = secret - share0
         return share0, share1
+
+
+def _share_random(shape) -> Tuple[BackingTensor, BackingTensor]:
+
+    with tf.name_scope('share_random'):
+        # typical way of sharing that only uses expanded randomness
+        # random = BackingTensor.sample_uniform(shape)
+        # share1, share0 = _share(random)
+
+        # alternative way to potentially send seeds instead of expanded randomness
+        share0 = BackingTensor.sample_uniform(shape)
+        share1 = BackingTensor.sample_uniform(shape)
+
+        return share0, share1
+
+
+def _share_zero(shape) -> Tuple[BackingTensor, BackingTensor]:
+    # TODO[Morten]
+    # we can do this by sending only seeds together with
+    # a constant that's multiplied after expanding (1 for
+    # the first share, -1 for the second)
+    raise NotImplementedError()
 
 
 def _reconstruct(share0, share1):
@@ -1894,8 +1921,8 @@ def _mask_private(prot, x):
     with tf.name_scope('mask'):
 
         with tf.device(prot.crypto_producer.device_name):
-            a = BackingTensor.sample_uniform(shape)
-            a0, a1 = _share(a)
+            a0, a1 = _share_random(shape)
+            a = a0 + a1
 
         with tf.device(prot.server_0.device_name):
             alpha0 = x0 - a0
