@@ -59,47 +59,24 @@ _crt_sample_uniform = gen_crt_sample_uniform(m, INT_TYPE)
 
 
 class Int100Tensor(object):
-
+    # TODO[Morten] make abstract
+    
     modulus = M
     int_type = INT_TYPE
-
-    def __init__(self, native_value: Optional[Union[np.ndarray, tf.Tensor]], decomposed_value: Optional[Union[List[np.ndarray], List[tf.Tensor]]]=None) -> None:
-        if decomposed_value is None:
-            decomposed_value = _crt_decompose(native_value)
-
-        # TODO[Morten] turn any np.ndarray into a tf.Constant to only store tf.Tensors?
-        assert type(decomposed_value) in [tuple, list], type(decomposed_value)
-
-        self.backing = decomposed_value
 
     @staticmethod
     def from_native(value: Union[np.ndarray, tf.Tensor]) -> 'Int100Tensor':
         assert isinstance(value, (np.ndarray, tf.Tensor)), type(value)
-        return Int100Tensor(value, None)
+        return Int100ExpandedTensor(value, None)
 
     @staticmethod
     def from_decomposed(value: Union[List[np.ndarray], List[tf.Tensor]]) -> 'Int100Tensor':
         assert type(value) in [tuple, list], type(value)
-        return Int100Tensor(None, value)
-
-    def eval(self, sess: tf.Session, feed_dict: Dict[Any, Any]={}, tag: Optional[str]=None) -> 'Int100Tensor':
-        evaluated_backing: Union[List[np.ndarray], List[tf.Tensor]] = run(
-            sess, self.backing, feed_dict=feed_dict, tag=tag)
-        return Int100Tensor.from_decomposed(evaluated_backing)
-
-    def to_native(self) -> Union[List[np.ndarray], List[tf.Tensor]]:
-        return _crt_recombine(self.backing).astype(object)
+        return Int100ExpandedTensor(None, value)
 
     @staticmethod
     def sample_uniform(shape: List[int]) -> 'Int100Tensor':
         return _sample_uniform(shape)
-
-    def __repr__(self) -> str:
-        return 'Int100Tensor({})'.format(self.to_native())
-
-    @property
-    def shape(self) -> List[int]:
-        return self.backing[0].shape
 
     def __add__(self, other: 'Int100Tensor') -> 'Int100Tensor':
         return _add(self, other)
@@ -132,23 +109,69 @@ class Int100Tensor(object):
         return _reshape(self, *axes)
 
 
+class Int100ExpandedTensor(Int100Tensor):
+
+    def __init__(self, native_value: Optional[Union[np.ndarray, tf.Tensor]], decomposed_value: Optional[Union[List[np.ndarray], List[tf.Tensor]]]=None) -> None:
+        super(Int100ExpandedTensor, self).__init__(self)
+
+        if decomposed_value is None:
+            decomposed_value = _crt_decompose(native_value)
+        assert type(decomposed_value) in [tuple, list], type(decomposed_value)
+
+        self.backing = decomposed_value
+
+    def __repr__(self) -> str:
+        return 'Int100ExpandedTensor({})'.format(self.shape)
+
+    @property
+    def shape(self) -> List[int]:
+        return self.backing[0].shape
+
+    def to_native(self) -> Union[List[np.ndarray], List[tf.Tensor]]:
+        return _crt_recombine(self.backing).astype(object)
+
+    def eval(self, sess: tf.Session, feed_dict: Dict[Any, Any]={}, tag: Optional[str]=None) -> 'Int100Tensor':
+        evaluated_backing = run(sess, self.backing, feed_dict=feed_dict, tag=tag)
+        return Int100Tensor.from_decomposed(evaluated_backing)
+
+
 CONTINUE HERE
 
-class Int100RandomTensor(object):
+class Int100SeededTensor(Int100Tensor):
 
-    def __init__(self, seed, post_multiply=None):
+    # TODO[Morten]
+    # for now we're expanded seeded tensors as soon as any
+    # operation is done on them (in _lift), but we could have
+    # more special cases where the operation is postponed to 
+    # a later point, for instance transpose
+
+    def __init__(self, shape, seed, post_multiply=None):
+        super(Int100SeededTensor, self).__init__(self)
+
+        self.shape = shape
         self.seed = seed
         self.post_multiply = post_multiply
 
-    def to_full_tensor(self):
-        tf.random_ CONTINUE
+    def __repr__(self) -> str:
+        return 'Int100SeededTensor({})'.format(self.shape)
+
+    @property
+    def shape(self) -> List[int]:
+        return self.shape
+
+    def expand(self) -> Int100ExpandedTensor:
+        backing = _crt_sample_uniform(self.shape, seed=self.seed)
+        return Int100ExpandedTensor.from_decomposed(backing)
 
 
 def _lift(x):
     # TODO[Morten] support other types of `x`
 
-    if isinstance(x, Int100Tensor):
+    if isinstance(x, Int100ExpandedTensor):
         return x
+
+    if isinstance(x, Int100SeededTensor):
+        return x.expand()
 
     if type(x) is int:
         return Int100Tensor.from_native(np.ndarray([x]))
@@ -159,37 +182,35 @@ def _lift(x):
 def _add(x, y):
     x, y = _lift(x), _lift(y)
     z_backing = _crt_add(x.backing, y.backing)
-    return Int100Tensor.from_decomposed(z_backing)
+    return Int100ExpandedTensor.from_decomposed(z_backing)
 
 
 def _sub(x, y):
     x, y = _lift(x), _lift(y)
     z_backing = _crt_sub(x.backing, y.backing)
-    return Int100Tensor.from_decomposed(z_backing)
+    return Int100ExpandedTensor.from_decomposed(z_backing)
 
 
 def _mul(x, y):
     x, y = _lift(x), _lift(y)
     z_backing = _crt_mul(x.backing, y.backing)
-    return Int100Tensor.from_decomposed(z_backing)
+    return Int100ExpandedTensor.from_decomposed(z_backing)
 
 
 def _dot(x, y):
     x, y = _lift(x), _lift(y)
     z_backing = _crt_dot(x.backing, y.backing)
-    return Int100Tensor.from_decomposed(z_backing)
+    return Int100ExpandedTensor.from_decomposed(z_backing)
 
 
 def _im2col(x, h_filter, w_filter, padding, strides):
-    assert isinstance(x, Int100Tensor), type(x)
+    x = _lift(x)
     backing = _crt_im2col(x.backing, h_filter, w_filter, padding, strides)
     return Int100Tensor.from_decomposed(backing)
 
 
 def _conv2d(x, y, strides, padding):
-    assert isinstance(x, Int100Tensor), type(x)
-    assert isinstance(y, Int100Tensor), type(y)
-
+    x, y = _lift(x), _lift(y)
     h_filter, w_filter, d_filters, n_filters = map(int, y.shape)
     n_x, d_x, h_x, w_x = map(int, x.shape)
     if padding == "SAME":
@@ -210,13 +231,9 @@ def _conv2d(x, y, strides, padding):
 
 
 def _mod(x, k):
+    x = _lift(x)
     y_backing = _crt_mod(x.backing, k)
-    return Int100Tensor.from_decomposed(y_backing)
-
-
-def _sample_uniform(shape):
-    backing = _crt_sample_uniform(shape)
-    return Int100Tensor.from_decomposed(backing)
+    return Int100ExpandedTensor.from_decomposed(y_backing)
 
 
 def _transpose(x, *axes):
